@@ -51,6 +51,23 @@ export class ChainContext {
         });
     }
 
+    get chainId(): number {
+        return this.chain.id
+    }
+
+    get chainName(): string {
+        return this.chain.name
+    }
+
+    get isTestnet(): boolean {
+        return (this.chain as any).testnet ?? true
+    }
+
+    tokenDecimals(symbol: TokenSymbol): number | undefined {
+        const addr = this.maybeAddress(symbol)
+        return addr ? this.tokens[addr]?.decimals : undefined
+    }
+
     maybeAddress(symbol: TokenSymbol): Address | undefined {
         return this.chainConfig.tokens[symbol]?.address
     }
