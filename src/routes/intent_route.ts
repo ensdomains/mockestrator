@@ -158,6 +158,14 @@ const create_intent_route = async (data: UserIntent): Promise<UserIntentRouteRes
                 originChains: [],
                 destination: { chainId: destinatinoChain, gasUSD: 0 },
                 totalUSD: 0
+            },
+            feeBreakdownUSD: {
+                gasFeeUSD: 0,
+                bridgeFeeUSD: 0,
+                protocolFeeUSD: 0,
+                swapFeeUSD: 0,
+                settlementFeeUSD: 0,
+                totalFeeUSD: 0
             }
         }
     }
