@@ -149,7 +149,21 @@ const create_intent_route = async (data: UserIntent): Promise<UserIntentRouteRes
         intentCost: {
             hasFulfilledAll: true,
             tokensSpent: {},
-            tokensReceived: [],
+            tokensReceived: userIntent.tokenRequests.map((transfer) => ({
+                tokenAddress: transfer.tokenAddress,
+                amountSpent: transfer.amount ?? 0n,
+                targetAmount: transfer.amount ?? 0n,
+                fee: 0n,
+                feeBreakdown: {
+                    gasFee: 0n,
+                    bridgeFee: 0n,
+                    protocolFee: 0n,
+                    swapFee: 0n,
+                    settlementFee: 0n
+                },
+                feesByToken: {},
+                hasFulfilled: true
+            })),
             sponsorFee: {
                 relayer: 0,
                 protocol: 0
