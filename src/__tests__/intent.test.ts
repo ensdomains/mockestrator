@@ -83,6 +83,135 @@ describe("Mockestrator Intent Flow", () => {
       expect(usdcEntry).toBeDefined();
       expect(usdcEntry.balance.unlocked).toBeGreaterThan(0);
     });
+
+    it("should return ETH balance in portfolio", async () => {
+      const response = await apiCall<any>(
+        "GET",
+        `/accounts/${USER_ADDRESS}/portfolio`
+      );
+
+      const ethEntry = response.portfolio.find(
+        (p: any) => p.tokenName === "ETH"
+      );
+      expect(ethEntry).toBeDefined();
+      expect(ethEntry.tokenDecimals).toBe(18);
+      expect(ethEntry.balance.unlocked).toBeGreaterThan(0);
+    });
+
+    it("should return per-chain balances for each token", async () => {
+      const response = await apiCall<any>(
+        "GET",
+        `/accounts/${USER_ADDRESS}/portfolio`
+      );
+
+      const usdcEntry = response.portfolio.find(
+        (p: any) => p.tokenName === "USDC"
+      );
+      expect(usdcEntry).toBeDefined();
+      expect(usdcEntry.tokenChainBalance.length).toBeGreaterThanOrEqual(2);
+
+      const baseSepoliaBalance = usdcEntry.tokenChainBalance.find(
+        (b: any) => b.chainId === BASE_SEPOLIA_CHAIN_ID
+      );
+      expect(baseSepoliaBalance).toBeDefined();
+      expect(baseSepoliaBalance.tokenAddress.toLowerCase()).toBe(
+        USDC_BASE_SEPOLIA.toLowerCase()
+      );
+      expect(baseSepoliaBalance.balance.unlocked).toBeGreaterThan(0);
+
+      const sepoliaBalance = usdcEntry.tokenChainBalance.find(
+        (b: any) => b.chainId === SEPOLIA_CHAIN_ID
+      );
+      expect(sepoliaBalance).toBeDefined();
+      expect(sepoliaBalance.tokenAddress.toLowerCase()).toBe(
+        USDC_SEPOLIA.toLowerCase()
+      );
+      expect(sepoliaBalance.balance.unlocked).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Intent Split API", () => {
+    it("should return single intent with full amount for a single token", async () => {
+      const response = await apiCall<any>("POST", "/intents/split", {
+        chainId: BASE_SEPOLIA_CHAIN_ID,
+        tokens: { [USDC_BASE_SEPOLIA]: 1000000 },
+      });
+
+      expect(response).toHaveProperty("intents");
+      expect(response.intents).toHaveLength(1);
+      expect(response.intents[0][USDC_BASE_SEPOLIA]).toBe("1000000");
+    });
+
+    it("should return single intent with all tokens for multi-token request", async () => {
+      const response = await apiCall<any>("POST", "/intents/split", {
+        chainId: SEPOLIA_CHAIN_ID,
+        tokens: {
+          [USDC_SEPOLIA]: 5000000,
+          "0x0000000000000000000000000000000000000000": 1000000000000000000,
+        },
+      });
+
+      expect(response.intents).toHaveLength(1);
+      expect(response.intents[0][USDC_SEPOLIA]).toBe("5000000");
+      expect(
+        response.intents[0]["0x0000000000000000000000000000000000000000"]
+      ).toBe("1000000000000000000");
+    });
+
+    it("should return empty intents for empty tokens", async () => {
+      const response = await apiCall<any>("POST", "/intents/split", {
+        chainId: BASE_SEPOLIA_CHAIN_ID,
+        tokens: {},
+      });
+
+      expect(response.intents).toHaveLength(0);
+    });
+  });
+
+  describe("Validation errors", () => {
+    it("should return 400 for route request with missing required fields", async () => {
+      const response = await fetch(`${API_BASE_URL}/intents/route`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
+      });
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body).toHaveProperty("error");
+    });
+
+    it("should return 400 for route request with missing tokenRequests", async () => {
+      const response = await fetch(`${API_BASE_URL}/intents/route`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          destinationChainId: BASE_SEPOLIA_CHAIN_ID,
+          account: { address: USER_ADDRESS },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+    });
+
+    it("should return 400 for split request with missing chainId", async () => {
+      const response = await fetch(`${API_BASE_URL}/intents/split`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ tokens: { [USDC_BASE_SEPOLIA]: 1000000 } }),
+      });
+
+      expect(response.status).toBe(400);
+    });
+
+    it("should return 404 for non-existent intent operation", async () => {
+      const response = await fetch(
+        `${API_BASE_URL}/intent-operation/9999999999999999999`,
+        { method: "GET", headers }
+      );
+
+      expect(response.status).toBe(404);
+    });
   });
 
   describe("Same-chain Intent Flow", () => {
