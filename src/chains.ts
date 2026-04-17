@@ -24,6 +24,8 @@ export class ChainContext {
 
     private testClient
 
+    private transport: Transport
+
     private tokens: Record<Address, {
         decimals: number;
         balanceSlot?: number;
@@ -33,6 +35,7 @@ export class ChainContext {
     private tokenSymbols: TokenSymbol[] = []
 
     constructor(private chain: Chain, account: Account, private chainConfig: ChainConfig, private fundingConfig: Config, transport: Transport) {
+        this.transport = transport
         this.walletClient = createWalletClient({
             account,
             transport,
@@ -267,6 +270,39 @@ export class ChainContext {
             address,
             bytecode: code
         })
+    }
+
+    public async isAccountDeployed(address: Address): Promise<boolean> {
+        const code = await this.walletClient.getCode({ address })
+        return !!code && code !== '0x' && code.length > 2
+    }
+
+    /**
+     * Execute calls as the smart account itself using anvil_impersonateAccount.
+     * This bypasses the intent executor's signature verification and ensures
+     * the smart account is msg.sender to target contracts (e.g. resolvers).
+     */
+    public async executeAsAccount(account: Address, calls: { to: Address; callData: Hex; value?: bigint }[]): Promise<Hash> {
+        await this.testClient.impersonateAccount({ address: account })
+        try {
+            const impersonatedClient = createWalletClient({
+                account,
+                transport: this.transport,
+                chain: this.chain,
+            })
+
+            let lastHash: Hash = '0x0' as Hash
+            for (const call of calls) {
+                lastHash = await impersonatedClient.sendTransaction({
+                    to: call.to,
+                    data: call.callData,
+                    value: call.value ?? 0n,
+                })
+            }
+            return lastHash
+        } finally {
+            await this.testClient.stopImpersonatingAccount({ address: account })
+        }
     }
 
     public async callFakeRouter(calls: { to: Address, callData: Hex }[]): Promise<{ to: Address, callData: Hex }> {

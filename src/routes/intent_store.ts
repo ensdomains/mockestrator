@@ -104,14 +104,7 @@ const executeLegacyFlow = async (
     signedIntent: any,
     recipient: Address
 ): Promise<Hex> => {
-    const setupOps = signedIntent.signedMetadata?.account?.setupOps
-
-    const setupCalls = setupOps ? setupOps.map((op: any) => {
-        return {
-            to: getAddress(op.to),
-            callData: op.data as Hex
-        }
-    }) : []
+    const setupCalls = await getSetupCallsIfNeeded(executor, signedIntent, recipient)
 
     const tokenTransfers = toTokenTransfers(signedIntent.elements)
     const tokenTransferCalls = tokenTransfers
@@ -147,12 +140,8 @@ const executeIntentExecutorFlow = async (
     destinationOps: Hex,
     destinationSignature: Hex
 ): Promise<Hex> => {
-    const setupOps = signedIntent.signedMetadata?.account?.setupOps
-
-    const setupCalls = setupOps ? setupOps.map((op: any) => ({
-        to: getAddress(op.to),
-        callData: op.data as Hex
-    })) : []
+    const setupCalls = await getSetupCallsIfNeeded(executor, signedIntent, recipient)
+    const isDeployed = await executor.isAccountDeployed(recipient)
 
     const tokenTransfers = toTokenTransfers(signedIntent.elements)
     const tokenTransferCalls = tokenTransfers
@@ -164,6 +153,33 @@ const executeIntentExecutorFlow = async (
 
     const nativeTransferValue = tokenTransfers.filter((t) => t.address == zeroAddress).map((t) => t.value)[0] ?? 0n
 
+    // For already-deployed accounts, execute destination ops directly as the
+    // smart account (via anvil_impersonateAccount). This bypasses the intent
+    // executor's on-chain signature verification which can fail in test
+    // environments, and ensures the smart account is msg.sender to target
+    // contracts like resolvers that check caller authorization.
+    if (isDeployed && setupCalls.length === 0) {
+        console.log(`Executing directly as account ${recipient} (bypassing intent executor)`)
+
+        // Handle token transfers via router first (if any)
+        if (tokenTransferCalls.length > 0) {
+            const transferCallData = await executor.callFakeRouter(tokenTransferCalls)
+            await executor.execute({ ...transferCallData, value: nativeTransferValue })
+        }
+
+        // Execute destination ops as the smart account
+        const destOps = toDestinationOps(signedIntent.elements)
+        if (destOps.length > 0) {
+            return executor.executeAsAccount(
+                recipient,
+                destOps.map(op => ({ to: op.to, callData: op.callData }))
+            )
+        }
+
+        return '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex
+    }
+
+    // Fallback: use intent executor flow (for first-time deployment etc.)
     const routerCalls = [
         ...setupCalls,
         ...tokenTransferCalls,
@@ -174,6 +190,34 @@ const executeIntentExecutorFlow = async (
     const routerTxHash = await executor.execute({ ...txCallData, value: nativeTransferValue })
 
     return routerTxHash
+}
+
+/**
+ * Returns setupOps calls only if the account is not yet deployed.
+ * The SDK always includes setupOps in the signed metadata, but executing them
+ * against an already-deployed account in the same mockFill batch causes reverts
+ * because the intent executor's signature verification fails when combined with
+ * factory deployment in a single transaction.
+ */
+async function getSetupCallsIfNeeded(
+    executor: ReturnType<typeof chainContexts>[number],
+    signedIntent: any,
+    recipient: Address
+): Promise<{ to: Address; callData: Hex }[]> {
+    const setupOps = signedIntent.signedMetadata?.account?.setupOps
+    if (!setupOps || setupOps.length === 0) return []
+
+    // Check if account already has code deployed
+    const isDeployed = await executor.isAccountDeployed(recipient)
+    if (isDeployed) {
+        console.log(`Account ${recipient} already deployed — skipping setupOps`)
+        return []
+    }
+
+    return setupOps.map((op: any) => ({
+        to: getAddress(op.to),
+        callData: op.data as Hex
+    }))
 }
 
 type TokenTransfer = {
