@@ -100,6 +100,8 @@ const create_intent_route = async (data: UserIntent): Promise<UserIntentRouteRes
             sponsor,
             nonce: randomBigInt,
             expires: BigInt(expires),
+            // SDK 1.4.2 expects targetExecutionNonce for getTargetExecutionMessage
+            targetExecutionNonce: 0n,
             elements: [
                 {
                     arbiter,
