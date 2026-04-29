@@ -2,8 +2,8 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetAccountsByUserAddressPortfolioData, GetAccountsByUserAddressPortfolioErrors, GetAccountsByUserAddressPortfolioResponses, GetChainsData, GetChainsResponses, GetIntentOperationByIdData, GetIntentOperationByIdErrors, GetIntentOperationByIdResponses, PostBatchWithdrawalsData, PostBatchWithdrawalsErrors, PostBatchWithdrawalsResponses, PostIntentOperationsData, PostIntentOperationsErrors, PostIntentOperationsResponses, PostIntentsRouteData, PostIntentsRouteErrors, PostIntentsRouteResponses, PostIntentsSplitData, PostIntentsSplitErrors, PostIntentsSplitResponses, PostWithdrawalsData, PostWithdrawalsErrors, PostWithdrawalsResponses } from './types.gen';
-import { zGetAccountsByUserAddressPortfolioData, zGetAccountsByUserAddressPortfolioResponse, zGetChainsData, zGetChainsResponse, zGetIntentOperationByIdData, zGetIntentOperationByIdResponse, zPostBatchWithdrawalsData, zPostBatchWithdrawalsResponse, zPostIntentOperationsData, zPostIntentOperationsResponse, zPostIntentsRouteData, zPostIntentsRouteResponse, zPostIntentsSplitData, zPostIntentsSplitResponse, zPostWithdrawalsData, zPostWithdrawalsResponse } from './zod.gen';
+import type { GetAccountsByUserAddressPortfolioData, GetAccountsByUserAddressPortfolioErrors, GetAccountsByUserAddressPortfolioResponses, GetChainsData, GetChainsResponses, GetIntentOperationByIdData, GetIntentOperationByIdErrors, GetIntentOperationByIdResponses, GetLiquidityData, GetLiquidityErrors, GetLiquidityResponses, PostBatchWithdrawalsData, PostBatchWithdrawalsErrors, PostBatchWithdrawalsResponses, PostIntentOperationsData, PostIntentOperationsErrors, PostIntentOperationsResponses, PostIntentsRouteData, PostIntentsRouteErrors, PostIntentsRouteResponses, PostIntentsSplitData, PostIntentsSplitErrors, PostIntentsSplitResponses, PostWithdrawalsData, PostWithdrawalsErrors, PostWithdrawalsResponses } from './types.gen';
+import { zGetAccountsByUserAddressPortfolioData, zGetAccountsByUserAddressPortfolioResponse, zGetChainsData, zGetChainsResponse, zGetIntentOperationByIdData, zGetIntentOperationByIdResponse, zGetLiquidityData, zGetLiquidityResponse, zPostBatchWithdrawalsData, zPostBatchWithdrawalsResponse, zPostIntentOperationsData, zPostIntentOperationsResponse, zPostIntentsRouteData, zPostIntentsRouteResponse, zPostIntentsSplitData, zPostIntentsSplitResponse, zPostWithdrawalsData, zPostWithdrawalsResponse } from './zod.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -132,5 +132,17 @@ export const getChains = <ThrowOnError extends boolean = false>(options?: Option
     requestValidator: async (data) => await zGetChainsData.parseAsync(data),
     responseValidator: async (data) => await zGetChainsResponse.parseAsync(data),
     url: '/chains',
+    ...options
+});
+
+/**
+ * Route liquidity limit
+ *
+ * Returns the maximum fillable amount for a single deposit on the given source→destination route.
+ */
+export const getLiquidity = <ThrowOnError extends boolean = false>(options: Options<GetLiquidityData, ThrowOnError>) => (options.client ?? client).get<GetLiquidityResponses, GetLiquidityErrors, ThrowOnError>({
+    requestValidator: async (data) => await zGetLiquidityData.parseAsync(data),
+    responseValidator: async (data) => await zGetLiquidityResponse.parseAsync(data),
+    url: '/liquidity',
     ...options
 });
