@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { Account, Address, Chain, createTestClient, createWalletClient, encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, getAddress, Hash, Hex, http, keccak256, multicall3Abi, NonceTooLowError, numberToHex, pad, publicActions, stringToHex, toHex, Transport, zeroAddress } from "viem";
+import { Account, Address, Chain, createTestClient, createWalletClient, encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, getAddress, Hash, Hex, http, keccak256, multicall3Abi, NonceTooLowError, numberToHex, pad, parseEther, publicActions, stringToHex, toHex, Transport, zeroAddress } from "viem";
 import z, { symbol, ZodSchema } from "zod";
 import { privateKeyToAccount } from 'viem/accounts'
 import { fakeRouterAbi } from "./abi/fakeRouter";
@@ -283,6 +283,16 @@ export class ChainContext {
      * the smart account is msg.sender to target contracts (e.g. resolvers).
      */
     public async executeAsAccount(account: Address, calls: { to: Address; callData: Hex; value?: bigint }[]): Promise<Hash> {
+        // Anvil requires the impersonated account to have ETH for gas even when
+        // it's a smart account with no native balance. Fund it temporarily.
+        await this.testClient.setBalance({ address: account, value: parseEther('1') })
+        // Fund all ERC20 tokens so the account can pay for operations (e.g. ENS
+        // renewal via USDC). In production the relayer fill provides these; here
+        // we simulate that by directly crediting the account via storage writes.
+        for (const symbol of this.tokenSymbols) {
+            if (symbol === 'ETH') continue
+            await this.fundAccount(account, symbol, 1_000_000_000_000n)
+        }
         await this.testClient.impersonateAccount({ address: account })
         try {
             const impersonatedClient = createWalletClient({
