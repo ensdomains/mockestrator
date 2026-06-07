@@ -9,7 +9,11 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "paths": {
+      "ox/tempo": ["./node_modules/ox/_types/tempo/index.d.ts"],
+      "ox/tempo/*": ["./node_modules/ox/_types/tempo/*.d.ts"]
+    }
   },
   "include": [
     "src"
