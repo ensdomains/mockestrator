@@ -331,7 +331,7 @@ export type PostIntentsRouteData = {
             /**
              * The settlement layer to be used to settle intents
              */
-            settlementLayers?: Array<'ACROSS' | 'ECO' | 'RELAY' | 'OFT' | 'NEAR'>;
+            settlementLayers?: Array<'ACROSS' | 'ECO' | 'RELAY' | 'OFT' | 'NEAR' | 'RHINO'>;
             /**
              * Sponsor settings for the intent
              */
@@ -548,7 +548,7 @@ export type PostIntentsRouteResponses = {
                                 /**
                                  * Bridge type
                                  */
-                                type: 'Relay';
+                                type: 'RELAY';
                                 /**
                                  * Relay API request ID
                                  */
@@ -566,6 +566,19 @@ export type PostIntentsRouteResponses = {
                                  * NEAR 1Click deposit address for status tracking
                                  */
                                 depositAddress: string;
+                            } | {
+                                /**
+                                 * Destination chain ID for the bridge fill
+                                 */
+                                destinationChainId: number;
+                                /**
+                                 * Bridge type
+                                 */
+                                type: 'RHINO';
+                                /**
+                                 * Rhino.fi commitment ID (hex ObjectId) for fill tracking
+                                 */
+                                commitmentId: string;
                             };
                         } | {
                             /**
@@ -600,7 +613,7 @@ export type PostIntentsRouteResponses = {
                                 /**
                                  * Bridge type
                                  */
-                                type: 'Relay';
+                                type: 'RELAY';
                                 /**
                                  * Relay API request ID
                                  */
@@ -618,6 +631,19 @@ export type PostIntentsRouteResponses = {
                                  * NEAR 1Click deposit address for status tracking
                                  */
                                 depositAddress: string;
+                            } | {
+                                /**
+                                 * Destination chain ID for the bridge fill
+                                 */
+                                destinationChainId: number;
+                                /**
+                                 * Bridge type
+                                 */
+                                type: 'RHINO';
+                                /**
+                                 * Rhino.fi commitment ID (hex ObjectId) for fill tracking
+                                 */
+                                commitmentId: string;
                             };
                         } | {
                             /**
@@ -703,6 +729,23 @@ export type PostIntentsRouteResponses = {
                              * NEAR correlation ID for tracking the intent
                              */
                             correlationId: string;
+                        } | {
+                            /**
+                             * Settlement layer for the qualifier
+                             */
+                            settlementLayer: 'RHINO';
+                            /**
+                             * Whether to use 7579
+                             */
+                            using7579: boolean;
+                            /**
+                             * The method of funding the intent
+                             */
+                            fundingMethod: 'COMPACT' | 'PERMIT2' | 'NO_FUNDING';
+                            /**
+                             * Rhino.fi quote identifier — committed quote that becomes the commitmentId for the on-chain deposit
+                             */
+                            quoteId: string;
                         };
                         /**
                          * Encoded qualification value
@@ -1475,7 +1518,7 @@ export type PostIntentsSplitData = {
         /**
          * Optional array of settlement layers to filter by. If not provided, all layers are considered.
          */
-        settlementLayers?: Array<'INTENT_EXECUTOR' | 'SAME_CHAIN' | 'ACROSS' | 'ECO' | 'RELAY' | 'OFT' | 'NEAR'>;
+        settlementLayers?: Array<'INTENT_EXECUTOR' | 'SAME_CHAIN' | 'ACROSS' | 'ECO' | 'RELAY' | 'OFT' | 'NEAR' | 'RHINO'>;
     };
     headers: {
         /**
@@ -1694,7 +1737,7 @@ export type PostIntentOperationsData = {
                                 /**
                                  * Bridge type
                                  */
-                                type: 'Relay';
+                                type: 'RELAY';
                                 /**
                                  * Relay API request ID
                                  */
@@ -1712,6 +1755,19 @@ export type PostIntentOperationsData = {
                                  * NEAR 1Click deposit address for status tracking
                                  */
                                 depositAddress: string;
+                            } | {
+                                /**
+                                 * Destination chain ID for the bridge fill
+                                 */
+                                destinationChainId: number;
+                                /**
+                                 * Bridge type
+                                 */
+                                type: 'RHINO';
+                                /**
+                                 * Rhino.fi commitment ID (hex ObjectId) for fill tracking
+                                 */
+                                commitmentId: string;
                             };
                         } | {
                             /**
@@ -1746,7 +1802,7 @@ export type PostIntentOperationsData = {
                                 /**
                                  * Bridge type
                                  */
-                                type: 'Relay';
+                                type: 'RELAY';
                                 /**
                                  * Relay API request ID
                                  */
@@ -1764,6 +1820,19 @@ export type PostIntentOperationsData = {
                                  * NEAR 1Click deposit address for status tracking
                                  */
                                 depositAddress: string;
+                            } | {
+                                /**
+                                 * Destination chain ID for the bridge fill
+                                 */
+                                destinationChainId: number;
+                                /**
+                                 * Bridge type
+                                 */
+                                type: 'RHINO';
+                                /**
+                                 * Rhino.fi commitment ID (hex ObjectId) for fill tracking
+                                 */
+                                commitmentId: string;
                             };
                         } | {
                             /**
@@ -1849,6 +1918,23 @@ export type PostIntentOperationsData = {
                              * NEAR correlation ID for tracking the intent
                              */
                             correlationId: string;
+                        } | {
+                            /**
+                             * Settlement layer for the qualifier
+                             */
+                            settlementLayer: 'RHINO';
+                            /**
+                             * Whether to use 7579
+                             */
+                            using7579: boolean;
+                            /**
+                             * The method of funding the intent
+                             */
+                            fundingMethod: 'COMPACT' | 'PERMIT2' | 'NO_FUNDING';
+                            /**
+                             * Rhino.fi quote identifier — committed quote that becomes the commitmentId for the on-chain deposit
+                             */
+                            quoteId: string;
                         };
                         /**
                          * Encoded qualification value
@@ -2890,3 +2976,96 @@ export type GetChainsResponses = {
 };
 
 export type GetChainsResponse = GetChainsResponses[keyof GetChainsResponses];
+
+export type GetLiquidityData = {
+    body?: never;
+    headers: {
+        /**
+         * Rhinestone API key
+         */
+        'x-api-key': string;
+        /**
+         * API version (YYYY-MM.name). Will become required in a future release.
+         */
+        'x-api-version'?: string;
+    };
+    path?: never;
+    query: {
+        /**
+         * Source chain ID
+         */
+        sourceChainId: number;
+        /**
+         * Source token address
+         */
+        sourceToken: string;
+        /**
+         * Destination chain ID
+         */
+        destinationChainId: number;
+        /**
+         * Destination token address
+         */
+        destinationToken: string;
+    };
+    url: '/liquidity';
+};
+
+export type GetLiquidityErrors = {
+    /**
+     * Invalid request parameters
+     */
+    400: {
+        errors: Array<{
+            /**
+             * Error message
+             */
+            message: string;
+            /**
+             * Additional error context
+             */
+            context?: unknown;
+        }>;
+        /**
+         * Trace ID
+         */
+        traceId: string;
+    };
+    /**
+     * Server error
+     */
+    500: {
+        /**
+         * Error message describing the server-side issue
+         */
+        error: string;
+    };
+};
+
+export type GetLiquidityError = GetLiquidityErrors[keyof GetLiquidityErrors];
+
+export type GetLiquidityResponses = {
+    /**
+     * Liquidity information for the requested route
+     */
+    200: {
+        /**
+         * Destination token symbol
+         */
+        symbol: string;
+        /**
+         * Destination token decimals
+         */
+        decimals: number;
+        /**
+         * True when an uncapped settlement layer (e.g. OFT) supports this route
+         */
+        unlimited: boolean;
+        /**
+         * Largest fillable amount for this token by a single relayer instance. Null when unlimited.
+         */
+        maxAmount: string | null;
+    };
+};
+
+export type GetLiquidityResponse = GetLiquidityResponses[keyof GetLiquidityResponses];
