@@ -67,15 +67,16 @@ const executeIntent = async (signedIntentData: SignedIntentData): Promise<Signed
 
     if (hasDestinationOps) {
         console.log('Executing via IntentExecutor with signature verification')
-        txHash = await executeIntentExecutorFlow(
+        txHash = await executeIntentExecutorFlow({
             executor,
             signedIntent,
             sponsor,
             nonce,
             recipient,
             destinationOps,
-            destinationSignature
-        )
+            destinationSignature,
+            gasRefund: extractGasRefund(destinationSignature),
+        })
     } else {
         console.log('Executing via FakeRouter')
         txHash = await executeLegacyFlow(executor, signedIntent, recipient)
@@ -131,15 +132,26 @@ const executeLegacyFlow = async (
     return executor.execute({ ...txCallData, value: nativeTransferValue })
 }
 
-const executeIntentExecutorFlow = async (
+const executeIntentExecutorFlow = async (params: {
     executor: ReturnType<typeof chainContexts>[number],
     signedIntent: any,
     sponsor: Address,
     nonce: bigint,
     recipient: Address,
     destinationOps: Hex,
-    destinationSignature: Hex
-): Promise<Hex> => {
+    destinationSignature: Hex,
+    gasRefund?: { token: Address, exchangeRate: bigint, overhead: bigint }
+}): Promise<Hex> => {
+    const {
+        executor,
+        signedIntent,
+        sponsor,
+        nonce,
+        recipient,
+        destinationOps,
+        destinationSignature,
+        gasRefund,
+    } = params
     const setupCalls = await getSetupCallsIfNeeded(executor, signedIntent, recipient)
     const isDeployed = await executor.isAccountDeployed(recipient)
 
@@ -183,13 +195,92 @@ const executeIntentExecutorFlow = async (
     const routerCalls = [
         ...setupCalls,
         ...tokenTransferCalls,
-        executor.intentExecutorCall(sponsor, nonce, destinationOps, destinationSignature)
+        executor.intentExecutorCall(sponsor, nonce, destinationOps, destinationSignature, gasRefund)
     ]
 
     const txCallData = await executor.callFakeRouter(routerCalls)
     const routerTxHash = await executor.execute({ ...txCallData, value: nativeTransferValue })
 
     return routerTxHash
+}
+
+/**
+ * Reads the gas-refund terms the account actually signed for, straight out of
+ * the destination signature bytes.
+ *
+ * These terms are baked into the EIP-712 digest the account signed
+ * (`IntentExecutor.hashGasRefund`, vs. the fixed `NO_GASREFUND` hash used by
+ * the plain `executeSinglechainOps`), so a fill that carries a signed refund
+ * MUST go through `executeSinglechainOpsWithGasRefund_ERC20` with the EXACT
+ * refund the signature commits to — calling the no-refund variant, or
+ * guessing the refund from anywhere else (e.g. the route quote's
+ * `mandate.qualifier.settlementContext.gasRefund`, which is only a planning
+ * estimate — observed zeroed-out on real requests, not the signed terms),
+ * recomputes a different digest than what was signed. The account's
+ * isValidSignature check then fails, surfacing as the orchestrator's generic
+ * InvalidSignature() with no further detail.
+ *
+ * Mirrors `HCAOwnerAndSessionValidator._validateFixedSession` (contracts-v2
+ * `src/hca/HCAOwnerAndSessionValidator.sol`): the destination signature is
+ * `[20-byte zero routing prefix][validator payload]` — accounts route ERC-7579
+ * signatures by a leading module address, which standalone-HCA intents leave
+ * zeroed. Byte offsets below are into the payload, i.e. AFTER that prefix.
+ */
+function extractGasRefund(
+    destinationSignature: Hex
+): { token: Address, exchangeRate: bigint, overhead: bigint } | undefined {
+    const ROUTING_PREFIX_LENGTH = 20
+    const payload = slice(destinationSignature, ROUTING_PREFIX_LENGTH)
+    if (payload.length < 4) return undefined // "0x" + at least 1 byte
+
+    const mode = payload.slice(0, 4) // "0x" + 1 byte
+    const readAddress = (from: number, to: number) => getAddress(slice(payload, from, to))
+    const readUint = (from: number, to: number) => BigInt(slice(payload, from, to))
+
+    // A signature can carry an all-zero {token: 0x0, exchangeRate: 0, overhead: 0}
+    // refund struct even in a mode that structurally has room for one — e.g. mode
+    // 0x05 embeds the fields on EVERY first-use commit, refund or not. The
+    // validator's own digest treats that degenerate case as NO_GAS_REFUND_HASH
+    // (`_singleChainDigest`, "gasRefund.token == 0 && ... ? NO_GAS_REFUND_HASH :
+    // keccak256(...)"), but `EIP712Lib.hashGasRefund` has no such special case —
+    // it hashes whatever it's given, zeroes included. So calling
+    // `executeSinglechainOpsWithGasRefund_ERC20` with an all-zero struct recomputes
+    // keccak256(TYPEHASH, 0, 0, 0), NOT NO_GAS_REFUND_HASH, and mismatches the
+    // validator same as calling the wrong function on a REAL refund does. Treat
+    // "no refund" and "zero refund" as the same thing: fall back to the plain
+    // no-refund path in both.
+    const asGasRefund = (token: Address, exchangeRate: bigint, overhead: bigint) =>
+        token === zeroAddress && exchangeRate === 0n && overhead === 0n
+            ? undefined
+            : { token, exchangeRate, overhead }
+
+    // FIXED_SESSION_MODE (0x01): no refund at all.
+    if (mode === '0x01') return undefined
+
+    // FIXED_SESSION_REFUND_MODE (0x02): steady-state refund, no enable proof.
+    // Layout: mode(1) permissionId(32) nonce(32) token(20) exchangeRate(32) overhead(32) ...
+    if (mode === '0x02') {
+        return asGasRefund(readAddress(65, 85), readUint(85, 117), readUint(117, 149))
+    }
+
+    // FIXED_SESSION_REFUND_ENABLE_MODE (0x05): first-use commit, carries the
+    // session-enable proof ahead of the (possibly zero) refund fields.
+    // Layout: mode(1) permissionId(32) proofLength(4) proof(proofLength)
+    //         nonce(32) token(20) exchangeRate(32) overhead(32) ...
+    if (mode === '0x05') {
+        const proofLength = Number(readUint(33, 37))
+        const proofEnd = 37 + proofLength
+        return asGasRefund(
+            readAddress(proofEnd + 32, proofEnd + 52),
+            readUint(proofEnd + 52, proofEnd + 84),
+            readUint(proofEnd + 84, proofEnd + 116)
+        )
+    }
+
+    // EMISSARY / ERC-1271 hybrid modes (0x00, 0x03, 0x04) and any future mode:
+    // not used by the standalone-HCA same-chain commit/reveal flow this mock
+    // exists for. Extend here if/when a new mode needs a refund fill.
+    return undefined
 }
 
 /**

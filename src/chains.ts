@@ -332,18 +332,40 @@ export class ChainContext {
         account: Address,
         nonce: bigint,
         opsData: Hex,
-        signature: Hex
+        signature: Hex,
+        gasRefund?: { token: Address, exchangeRate: bigint, overhead: bigint }
     ): { to: Address; callData: Hex } {
-        const callData = encodeFunctionData({
-            abi: intentExecutorAbi,
-            functionName: 'executeSinglechainOps',
-            args: [{
-                account,
-                nonce,
-                ops: { data: opsData },
-                signature,
-            }],
-        })
+        // The signed intent's EIP-712 digest binds the gas-refund terms into the hash
+        // (see IntentExecutor's `hashGasRefund` vs `NO_GASREFUND`), so calling the plain
+        // no-refund `executeSinglechainOps` for an intent that was actually signed WITH a
+        // refund recomputes a different digest than what was signed — the account's
+        // isValidSignature then reverts/returns false and the whole fill reverts with the
+        // orchestrator's generic InvalidSignature(). We must call the matching variant.
+        const callData = gasRefund
+            ? encodeFunctionData({
+                abi: intentExecutorAbi,
+                functionName: 'executeSinglechainOpsWithGasRefund_ERC20',
+                args: [
+                    {
+                        account,
+                        nonce,
+                        ops: { data: opsData },
+                        signature,
+                    },
+                    gasRefund,
+                    this.walletClient.account.address,
+                ],
+            })
+            : encodeFunctionData({
+                abi: intentExecutorAbi,
+                functionName: 'executeSinglechainOps',
+                args: [{
+                    account,
+                    nonce,
+                    ops: { data: opsData },
+                    signature,
+                }],
+            })
 
         return {
             to: INTENT_EXECUTOR_ADDRESS,
@@ -355,9 +377,10 @@ export class ChainContext {
         account: Address,
         nonce: bigint,
         opsData: Hex,
-        signature: Hex
+        signature: Hex,
+        gasRefund?: { token: Address, exchangeRate: bigint, overhead: bigint }
     ): Promise<Hash> {
-        const { to, callData } = this.intentExecutorCall(account, nonce, opsData, signature)
+        const { to, callData } = this.intentExecutorCall(account, nonce, opsData, signature, gasRefund)
 
         return this.execute({
             to,

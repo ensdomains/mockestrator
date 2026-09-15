@@ -27,6 +27,46 @@ export const intentExecutorAbi = [
   },
   {
     type: "function",
+    name: "executeSinglechainOpsWithGasRefund_ERC20",
+    inputs: [
+      {
+        name: "signedOps",
+        type: "tuple",
+        internalType: "struct IStandaloneIntentExecutor.SingleChainOps",
+        components: [
+          { name: "account", type: "address", internalType: "address" },
+          { name: "nonce", type: "uint256", internalType: "uint256" },
+          {
+            name: "ops",
+            type: "tuple",
+            internalType: "struct Types.Operation",
+            components: [
+              { name: "data", type: "bytes", internalType: "bytes" },
+            ],
+          },
+          { name: "signature", type: "bytes", internalType: "bytes" },
+        ],
+      },
+      {
+        name: "gasRefund",
+        type: "tuple",
+        internalType: "struct IStandaloneIntentExecutor.GasRefund",
+        components: [
+          { name: "token", type: "address", internalType: "address" },
+          { name: "exchangeRate", type: "uint256", internalType: "uint256" },
+          { name: "overhead", type: "uint256", internalType: "uint256" },
+        ],
+      },
+      { name: "gasRefundRecipient", type: "address", internalType: "address" },
+    ],
+    outputs: [
+      { name: "account", type: "address", internalType: "address" },
+      { name: "nonce", type: "uint256", internalType: "uint256" },
+    ],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
     name: "isInitialized",
     inputs: [
       { name: "smartAccount", type: "address", internalType: "address" },
