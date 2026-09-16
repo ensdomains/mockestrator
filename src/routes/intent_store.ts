@@ -220,11 +220,35 @@ const executeIntentExecutorFlow = async (params: {
  * isValidSignature check then fails, surfacing as the orchestrator's generic
  * InvalidSignature() with no further detail.
  *
- * Mirrors `HCAOwnerAndSessionValidator._validateFixedSession` (contracts-v2
- * `src/hca/HCAOwnerAndSessionValidator.sol`): the destination signature is
- * `[20-byte zero routing prefix][validator payload]` — accounts route ERC-7579
- * signatures by a leading module address, which standalone-HCA intents leave
- * zeroed. Byte offsets below are into the payload, i.e. AFTER that prefix.
+ * Mirrors `HCAOwnerAndSessionValidator._validateFixedSession` as actually
+ * deployed (read from the redeploy's own build-info — the checked-out
+ * contracts-v2 branch is a DIFFERENT, unrelated deployment and its source
+ * does not match; see contracts-v2 commit `71a3b733`'s
+ * `src/hca/HCAOwnerAndSessionValidator.sol`). The validator is now
+ * session-stateless: `_validateFixedSession` only accepts mode 0x04
+ * (Permit2, cross-chain, no refund) or 0x05 (same-chain, this one) — the old
+ * 0x01/0x02/0x03 steady-state modes no longer exist on-chain at all.
+ *
+ * The destination signature is `[20-byte zero routing prefix][validator
+ * payload]` — accounts route ERC-7579 signatures by a leading module address,
+ * which standalone-HCA intents leave zeroed. Byte offsets below are into the
+ * payload, i.e. AFTER that prefix.
+ *
+ * Mode 0x05 layout — NOT a simple mode+permissionId+length-prefixed-proof.
+ * The proof is `_decodeSessionEnableProof`'s fixed-size `SessionEnableProof`
+ * struct (109 bytes) immediately after permissionId, followed by a 1-byte
+ * chain count, then that many packed 40-byte (chainId ++ sessionDigest)
+ * entries (`HCASmartSessionLib.AUTHORIZATION_ENTRY_LENGTH`), then a 65-byte
+ * owner signature over the multi-chain authorization:
+ *   mode(1) permissionId(32)
+ *   [SessionEnableProof(109) chainCount(1)]           <- HEADER_LENGTH=110
+ *   packedSessions(chainCount * 40) ownerSignature(65) <- proofEnd
+ *   nonce(32) token(20) exchangeRate(uint96/12) refundAmount(uint96/12)
+ *   gasOverhead(uint48/6)                              <- 82 bytes total
+ *   operationData(var) signature(65)
+ * `GasRefund.overhead` on-chain is a single packed field, not the raw
+ * 6-byte gasOverhead: `(refundAmount << 128) | gasOverhead`
+ * (`_checkGasRefund`: "refundAmount = gasRefund.overhead >> 128").
  */
 function extractGasRefund(
     destinationSignature: Hex
@@ -234,53 +258,38 @@ function extractGasRefund(
     if (payload.length < 4) return undefined // "0x" + at least 1 byte
 
     const mode = payload.slice(0, 4) // "0x" + 1 byte
+    if (mode !== '0x05') return undefined // 0x04 (Permit2) carries no gas refund
+
     const readAddress = (from: number, to: number) => getAddress(slice(payload, from, to))
     const readUint = (from: number, to: number) => BigInt(slice(payload, from, to))
 
+    const PROOF_OFFSET = 33
+    const HEADER_LENGTH = 110 // 109-byte SessionEnableProof + 1-byte chain count
+    const AUTHORIZATION_ENTRY_LENGTH = 40
+    const OWNER_SIGNATURE_LENGTH = 65
+    const chainCount = Number(readUint(PROOF_OFFSET + HEADER_LENGTH - 1, PROOF_OFFSET + HEADER_LENGTH))
+    const sessionsOffset = PROOF_OFFSET + HEADER_LENGTH
+    const proofEnd = sessionsOffset + chainCount * AUTHORIZATION_ENTRY_LENGTH + OWNER_SIGNATURE_LENGTH
+
+    const token = readAddress(proofEnd + 32, proofEnd + 52)
+    const exchangeRate = readUint(proofEnd + 52, proofEnd + 64)
+    const refundAmount = readUint(proofEnd + 64, proofEnd + 76)
+    const gasOverhead = readUint(proofEnd + 76, proofEnd + 82)
+    const overhead = (refundAmount << 128n) | gasOverhead
+
     // A signature can carry an all-zero {token: 0x0, exchangeRate: 0, overhead: 0}
-    // refund struct even in a mode that structurally has room for one — e.g. mode
-    // 0x05 embeds the fields on EVERY first-use commit, refund or not. The
-    // validator's own digest treats that degenerate case as NO_GAS_REFUND_HASH
-    // (`_singleChainDigest`, "gasRefund.token == 0 && ... ? NO_GAS_REFUND_HASH :
-    // keccak256(...)"), but `EIP712Lib.hashGasRefund` has no such special case —
-    // it hashes whatever it's given, zeroes included. So calling
-    // `executeSinglechainOpsWithGasRefund_ERC20` with an all-zero struct recomputes
-    // keccak256(TYPEHASH, 0, 0, 0), NOT NO_GAS_REFUND_HASH, and mismatches the
-    // validator same as calling the wrong function on a REAL refund does. Treat
-    // "no refund" and "zero refund" as the same thing: fall back to the plain
-    // no-refund path in both.
-    const asGasRefund = (token: Address, exchangeRate: bigint, overhead: bigint) =>
-        token === zeroAddress && exchangeRate === 0n && overhead === 0n
-            ? undefined
-            : { token, exchangeRate, overhead }
-
-    // FIXED_SESSION_MODE (0x01): no refund at all.
-    if (mode === '0x01') return undefined
-
-    // FIXED_SESSION_REFUND_MODE (0x02): steady-state refund, no enable proof.
-    // Layout: mode(1) permissionId(32) nonce(32) token(20) exchangeRate(32) overhead(32) ...
-    if (mode === '0x02') {
-        return asGasRefund(readAddress(65, 85), readUint(85, 117), readUint(117, 149))
-    }
-
-    // FIXED_SESSION_REFUND_ENABLE_MODE (0x05): first-use commit, carries the
-    // session-enable proof ahead of the (possibly zero) refund fields.
-    // Layout: mode(1) permissionId(32) proofLength(4) proof(proofLength)
-    //         nonce(32) token(20) exchangeRate(32) overhead(32) ...
-    if (mode === '0x05') {
-        const proofLength = Number(readUint(33, 37))
-        const proofEnd = 37 + proofLength
-        return asGasRefund(
-            readAddress(proofEnd + 32, proofEnd + 52),
-            readUint(proofEnd + 52, proofEnd + 84),
-            readUint(proofEnd + 84, proofEnd + 116)
-        )
-    }
-
-    // EMISSARY / ERC-1271 hybrid modes (0x00, 0x03, 0x04) and any future mode:
-    // not used by the standalone-HCA same-chain commit/reveal flow this mock
-    // exists for. Extend here if/when a new mode needs a refund fill.
-    return undefined
+    // refund struct on every first-use commit, refund or not — the fields are
+    // always structurally present in mode 0x05. The validator's own digest
+    // treats that degenerate case as NO_GAS_REFUND_HASH (`_singleChainDigest`,
+    // "gasRefund.token == 0 && ... ? NO_GAS_REFUND_HASH : keccak256(...)"), but
+    // `EIP712Lib.hashGasRefund` has no such special case — it hashes whatever
+    // it's given, zeroes included. So calling
+    // `executeSinglechainOpsWithGasRefund_ERC20` with an all-zero struct
+    // recomputes keccak256(TYPEHASH, 0, 0, 0), NOT NO_GAS_REFUND_HASH, and
+    // mismatches the validator the same way calling the wrong function on a
+    // REAL refund does. Treat "no refund" and "zero refund" as the same thing.
+    if (token === zeroAddress && exchangeRate === 0n && overhead === 0n) return undefined
+    return { token, exchangeRate, overhead }
 }
 
 /**
