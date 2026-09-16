@@ -209,7 +209,8 @@ export const zPostIntentsRouteData = z.object({
                 'ECO',
                 'RELAY',
                 'OFT',
-                'NEAR'
+                'NEAR',
+                'RHINO'
             ]))),
             sponsorSettings: z.optional(z.object({
                 gasSponsored: z.optional(z.boolean()).default(false),
@@ -307,13 +308,18 @@ export const zPostIntentsRouteResponse = z.object({
                                 }),
                                 z.object({
                                     destinationChainId: z.number(),
-                                    type: z.enum(['Relay']),
+                                    type: z.enum(['RELAY']),
                                     requestId: z.string()
                                 }),
                                 z.object({
                                     destinationChainId: z.number(),
                                     type: z.enum(['NEAR']),
                                     depositAddress: z.string()
+                                }),
+                                z.object({
+                                    destinationChainId: z.number(),
+                                    type: z.enum(['RHINO']),
+                                    commitmentId: z.string()
                                 })
                             ]))
                         }),
@@ -332,13 +338,18 @@ export const zPostIntentsRouteResponse = z.object({
                                 }),
                                 z.object({
                                     destinationChainId: z.number(),
-                                    type: z.enum(['Relay']),
+                                    type: z.enum(['RELAY']),
                                     requestId: z.string()
                                 }),
                                 z.object({
                                     destinationChainId: z.number(),
                                     type: z.enum(['NEAR']),
                                     depositAddress: z.string()
+                                }),
+                                z.object({
+                                    destinationChainId: z.number(),
+                                    type: z.enum(['RHINO']),
+                                    commitmentId: z.string()
                                 })
                             ]))
                         }),
@@ -385,6 +396,16 @@ export const zPostIntentsRouteResponse = z.object({
                             ]),
                             depositAddress: z.string(),
                             correlationId: z.string()
+                        }),
+                        z.object({
+                            settlementLayer: z.enum(['RHINO']),
+                            using7579: z.boolean(),
+                            fundingMethod: z.enum([
+                                'COMPACT',
+                                'PERMIT2',
+                                'NO_FUNDING'
+                            ]),
+                            quoteId: z.string()
                         })
                     ]),
                     encodedVal: z.string().regex(/^0x[a-fA-F0-9]*$/)
@@ -677,7 +698,8 @@ export const zPostIntentsSplitData = z.object({
             'ECO',
             'RELAY',
             'OFT',
-            'NEAR'
+            'NEAR',
+            'RHINO'
         ])))
     })),
     path: z.optional(z.never()),
@@ -733,13 +755,18 @@ export const zPostIntentOperationsData = z.object({
                                     }),
                                     z.object({
                                         destinationChainId: z.number(),
-                                        type: z.enum(['Relay']),
+                                        type: z.enum(['RELAY']),
                                         requestId: z.string()
                                     }),
                                     z.object({
                                         destinationChainId: z.number(),
                                         type: z.enum(['NEAR']),
                                         depositAddress: z.string()
+                                    }),
+                                    z.object({
+                                        destinationChainId: z.number(),
+                                        type: z.enum(['RHINO']),
+                                        commitmentId: z.string()
                                     })
                                 ]))
                             }),
@@ -758,13 +785,18 @@ export const zPostIntentOperationsData = z.object({
                                     }),
                                     z.object({
                                         destinationChainId: z.number(),
-                                        type: z.enum(['Relay']),
+                                        type: z.enum(['RELAY']),
                                         requestId: z.string()
                                     }),
                                     z.object({
                                         destinationChainId: z.number(),
                                         type: z.enum(['NEAR']),
                                         depositAddress: z.string()
+                                    }),
+                                    z.object({
+                                        destinationChainId: z.number(),
+                                        type: z.enum(['RHINO']),
+                                        commitmentId: z.string()
                                     })
                                 ]))
                             }),
@@ -811,6 +843,16 @@ export const zPostIntentOperationsData = z.object({
                                 ]),
                                 depositAddress: z.string(),
                                 correlationId: z.string()
+                            }),
+                            z.object({
+                                settlementLayer: z.enum(['RHINO']),
+                                using7579: z.boolean(),
+                                fundingMethod: z.enum([
+                                    'COMPACT',
+                                    'PERMIT2',
+                                    'NO_FUNDING'
+                                ]),
+                                quoteId: z.string()
                             })
                         ]),
                         encodedVal: z.string().regex(/^0x[a-fA-F0-9]*$/)
@@ -1207,3 +1249,31 @@ export const zGetChainsResponse = z.record(z.string(), z.object({
     ]),
     testnet: z.boolean()
 }));
+
+export const zGetLiquidityData = z.object({
+    body: z.optional(z.never()),
+    path: z.optional(z.never()),
+    query: z.object({
+        sourceChainId: z.int().gte(1),
+        sourceToken: z.string(),
+        destinationChainId: z.int().gte(1),
+        destinationToken: z.string()
+    }),
+    headers: z.object({
+        'x-api-key': z.string(),
+        'x-api-version': z.optional(z.string().regex(/^\d{4}-\d{2}\.[a-z0-9]+$/))
+    })
+});
+
+/**
+ * Liquidity information for the requested route
+ */
+export const zGetLiquidityResponse = z.object({
+    symbol: z.string(),
+    decimals: z.number(),
+    unlimited: z.boolean(),
+    maxAmount: z.union([
+        z.string(),
+        z.null()
+    ])
+});
