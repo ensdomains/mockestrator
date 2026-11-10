@@ -5,6 +5,7 @@ import { z, ZodError } from "zod";
 import { Address, getAddress, hexToBigInt } from "viem";
 import { randomBytes } from "crypto";
 import { chainContexts } from "../chains";
+import { withoutAddressFeeToken } from "../feeToken";
 
 type UserIntent = z.infer<typeof zPostIntentsRouteData>
 
@@ -17,7 +18,7 @@ export const intent_route = async (req: Request, resp: Response) => {
 
     try {
         const params = zPostIntentsRouteData.parse({
-            body: req.body,
+            body: withoutAddressFeeToken(req.body),
             query: undefined,
             path: undefined,
             headers: req.headers
