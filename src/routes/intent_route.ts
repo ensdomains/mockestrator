@@ -2,9 +2,11 @@ import { Request, Response } from "express";
 import { jsonify, logRequest } from "../log";
 import { zPostIntentsRouteData, zPostIntentsRouteResponse } from "../gen/zod.gen";
 import { z, ZodError } from "zod";
-import { Address, getAddress, hexToBigInt } from "viem";
+import { Address, getAddress, hexToBigInt, TypedDataDefinition } from "viem";
 import { randomBytes } from "crypto";
-import { chainContexts } from "../chains";
+import { chainContext, chainContexts } from "../chains";
+import { ACROSS_ARBITER, ACROSS_QUOTE_LIFETIME_S, acrossLegs, approvalPermit } from "../across";
+import { PERMIT2_ADDRESS } from "../abi/permit2";
 
 type UserIntent = z.infer<typeof zPostIntentsRouteData>
 
@@ -24,7 +26,7 @@ export const intent_route = async (req: Request, resp: Response) => {
         })
         const body = await create_intent_route({
             ...params,
-        })
+        }, req.body?.accountAccessList)
         console.log('Response: ', jsonify(body))
         resp.status(201).json(body)
     } catch (e) {
@@ -42,24 +44,33 @@ export const intent_route = async (req: Request, resp: Response) => {
     }
 }
 
-const create_intent_route = async (data: UserIntent): Promise<UserIntentRouteResponse> => {
+const create_intent_route = async (data: UserIntent, rawAccessList: unknown): Promise<UserIntentRouteResponse> => {
 
     const userIntent = data.body!
 
     const sponsor = getAddress(userIntent.account.address)
-    // there should be a way to specify different address
-    const recipient = sponsor
-    // do we need it or we can put to random value
-    const arbiter = "0xdead00000000000000000000000000000000beef"
 
     const maxNonce = (1n << 63n) - 1n
     const randomBigInt = (hexToBigInt('0x' + randomBytes(8).toString('hex') as `0x${string}`) % maxNonce) + 1n
 
     const currentDate = Math.floor(Date.now() / 1000);
-    const expires = currentDate + 3600 // expires in 1h
 
     const destinatinoChain = userIntent.destinationChainId
-    const sourceChain = extractSourceChain(userIntent.accountAccessList)
+    const sourceChain = chainTokensSource(rawAccessList) ?? extractSourceChain(userIntent.accountAccessList)
+    const isAcross = sourceChain != destinatinoChain
+
+    // Same-chain intents keep paying the sponsor; an Across route pays the
+    // requested recipient (e.g. a smart account funded from the user's wallet)
+    const recipient = isAcross && userIntent.recipient ? getAddress(userIntent.recipient.address) : sponsor
+    // do we need it or we can put to random value
+    const arbiter = isAcross ? ACROSS_ARBITER : "0xdead00000000000000000000000000000000beef"
+    // An Across permit is checked against the source chain's clock, which a
+    // fork may have warped away from ours, so it expires by that clock
+    const expires = isAcross
+        ? Number((await chainContext(sourceChain).client.getBlock()).timestamp) + ACROSS_QUOTE_LIFETIME_S
+        : currentDate + 3600
+
+    const across = isAcross ? await quoteAcross(sourceChain, destinatinoChain, sponsor, userIntent.tokenRequests, BigInt(expires)) : undefined
 
     const qualifier = (() => {
         if (sourceChain == destinatinoChain) {
@@ -106,7 +117,7 @@ const create_intent_route = async (data: UserIntent): Promise<UserIntentRouteRes
                 {
                     arbiter,
                     chainId: BigInt(sourceChain),
-                    idsAndAmounts: [],
+                    idsAndAmounts: across?.idsAndAmounts ?? [],
                     spendTokens: [],
                     mandate: {
                         recipient,
@@ -183,8 +194,48 @@ const create_intent_route = async (data: UserIntent): Promise<UserIntentRouteRes
                 settlementFeeUSD: 0,
                 totalFeeUSD: 0
             }
+        },
+        // carries an ERC-2612 permit, which the generated schema predates
+        tokenRequirements: across?.tokenRequirements as UserIntentRouteResponse["tokenRequirements"],
+    }
+}
+
+type TokenRequests = UserIntent["body"] extends infer B ? B extends { tokenRequests: infer T } ? T : never : never
+
+/**
+ * What an Across route moves on the source chain: the source chain's token of
+ * the same symbol as each requested one, at no fee, plus an ERC-2612 permit
+ * for Permit2 wherever the sponsor's allowance falls short.
+ */
+const quoteAcross = async (sourceChain: number, destinationChain: number, sponsor: Address, tokenRequests: TokenRequests, expires: bigint) => {
+    const source = chainContext(sourceChain)
+    const destination = chainContext(destinationChain)
+
+    const legs = acrossLegs(source, destination, tokenRequests)
+
+    const tokenRequirements: Record<string, Record<Address, { type: "approval", amount: bigint, spender: Address, permit: TypedDataDefinition }>> = {}
+    for (const { token, amount } of legs) {
+        const permit = await approvalPermit(source, sponsor, token, amount, expires)
+        if (permit) {
+            tokenRequirements[sourceChain] = {
+                ...tokenRequirements[sourceChain],
+                [token]: { type: "approval", amount, spender: PERMIT2_ADDRESS, permit },
+            }
         }
     }
+
+    return {
+        idsAndAmounts: legs.map(({ token, amount }) => [hexToBigInt(token), amount] as [bigint, bigint]),
+        tokenRequirements: Object.keys(tokenRequirements).length > 0 ? tokenRequirements : undefined,
+    }
+}
+
+// SDK 1.22 sends sourceAssets as { chainTokens: { [chainId]: tokens } }, which
+// the generated schema predates and strips, so it is read off the raw body
+function chainTokensSource(rawAccessList: unknown): number | undefined {
+    const chainTokens = (rawAccessList as { chainTokens?: Record<string, unknown> } | undefined)?.chainTokens
+    const [chainId] = Object.keys(chainTokens ?? {})
+    return chainId == undefined ? undefined : parseInt(chainId)
 }
 
 function extractSourceChain(accountAccessList: AccountAccessListType | undefined): number {
