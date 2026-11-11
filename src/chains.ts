@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { Account, Address, Chain, createTestClient, createWalletClient, encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, getAddress, Hash, Hex, http, keccak256, multicall3Abi, NonceTooLowError, numberToHex, pad, parseEther, publicActions, stringToHex, toHex, Transport, zeroAddress } from "viem";
+import { Account, Address, Chain, createTestClient, createWalletClient, encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, getAddress, Hash, Hex, http, isAddressEqual, keccak256, multicall3Abi, NonceTooLowError, numberToHex, pad, parseEther, publicActions, stringToHex, toHex, Transport, zeroAddress } from "viem";
 import z, { symbol, ZodSchema } from "zod";
 import { privateKeyToAccount } from 'viem/accounts'
 import { fakeRouterAbi } from "./abi/fakeRouter";
@@ -85,6 +85,17 @@ export class ChainContext {
 
     supportedTokens(): TokenSymbol[] {
         return this.tokenSymbols
+    }
+
+    symbolOf(address: Address): TokenSymbol | undefined {
+        return this.tokenSymbols.find((symbol) => {
+            const tokenAddress = this.maybeAddress(symbol)
+            return tokenAddress != undefined && isAddressEqual(tokenAddress, address)
+        })
+    }
+
+    get client() {
+        return this.walletClient
     }
 
     public async balanceOf(address: Address, tokenSymbols: TokenSymbol[]): Promise<Balance[]> {
@@ -315,6 +326,29 @@ export class ChainContext {
         }
     }
 
+    /**
+     * Send one call from `account` without its key, through anvil_impersonateAccount.
+     * Unlike executeAsAccount it funds no tokens, so balances stay what the test set.
+     */
+    public async sendAs(account: Address, call: { to: Address; callData: Hex }): Promise<Hash> {
+        await this.testClient.setBalance({ address: account, value: parseEther('1') })
+        await this.testClient.impersonateAccount({ address: account })
+        try {
+            const hash = await createWalletClient({
+                account,
+                transport: this.transport,
+                chain: this.chain,
+            }).sendTransaction({ to: call.to, data: call.callData })
+            const receipt = await this.walletClient.waitForTransactionReceipt({ hash })
+            if (receipt.status == 'reverted') {
+                throw new Error(`Transaction ${hash} reverted`)
+            }
+            return hash
+        } finally {
+            await this.testClient.stopImpersonatingAccount({ address: account })
+        }
+    }
+
     public async callFakeRouter(calls: { to: Address, callData: Hex }[]): Promise<{ to: Address, callData: Hex }> {
         const encoded = encodeFunctionData({
             abi: fakeRouterAbi,
@@ -411,6 +445,8 @@ export const BigIntSchema = z.coerce.bigint()
 
 const RpcSchema = z.record(z.string(), z.object({
     rpc: z.string(),
+    // an optional chain that cannot be reached at startup is left out, not fatal
+    optional: z.boolean().optional(),
 }))
 type RpcConfig = z.infer<typeof RpcSchema>
 
@@ -494,6 +530,11 @@ async function loadChainContexts(): Promise<ChainContexts> {
         }
 
         const chainContext = new ChainContext(chain, account, chainEntry, config, http(rpcConfig.rpc))
+
+        if (rpcConfig.optional && !(await chainContext.client.getChainId().then(() => true, () => false))) {
+            console.warn(`Optional chain ${chainId} at ${rpcConfig.rpc} is unreachable - skipping it`)
+            continue
+        }
 
         await chainContext.setupAccount(config)
 

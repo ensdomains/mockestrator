@@ -4,7 +4,8 @@ import { Request, Response } from "express"
 import { zPostIntentOperationsData, zPostIntentOperationsResponse } from "../gen/zod.gen"
 import { addNewIntent } from "../services/intentRepo"
 import { Address, encodeAbiParameters, encodePacked, fromHex, getAddress, Hex, pad, slice, toHex, zeroAddress } from "viem"
-import { AddressSchema, BigIntSchema, chainContexts, VarHex } from "../chains"
+import { AddressSchema, BigIntSchema, chainContext, chainContexts, VarHex } from "../chains"
+import { parseAcrossElement, PermitSignatures, PermitSignaturesSchema, pullAcrossDeposit } from "../across"
 
 type SignedIntentData = z.infer<typeof zPostIntentOperationsData>
 
@@ -20,9 +21,11 @@ export const intent_store = async (req: Request, resp: Response) => {
             path: undefined,
             headers: req.headers
         })
+        // the generated schema predates permit signatures, so they are read off the raw body
+        const permitSignatures = PermitSignaturesSchema.parse(req.body?.signedIntentOp?.permitSignatures)
         const body = await executeIntent({
             ...params,
-        })
+        }, permitSignatures)
         console.log('Response: ', jsonify(body))
         resp.status(201).json(body)
     } catch (e) {
@@ -40,7 +43,7 @@ export const intent_store = async (req: Request, resp: Response) => {
     }
 }
 
-const executeIntent = async (signedIntentData: SignedIntentData): Promise<SignedIntentResponse> => {
+const executeIntent = async (signedIntentData: SignedIntentData, permitSignatures: PermitSignatures): Promise<SignedIntentResponse> => {
     const signedIntent = signedIntentData.body!.signedIntentOp
 
     const sponsor = getAddress(signedIntent.sponsor)
@@ -49,6 +52,26 @@ const executeIntent = async (signedIntentData: SignedIntentData): Promise<Signed
     const nonce = BigInt(signedIntent.nonce)
 
     const executor = chainContexts()[destinationChain]
+
+    const sourceChain = Number(signedIntent.elements[0].chainId)
+    if (sourceChain != destinationChain) {
+        // Across: take the deposit on the source chain first, so an intent the
+        // wallet did not validly sign is refused before anything is filled
+        const [originSignature] = signedIntent.originSignatures
+        if (typeof originSignature != 'string') {
+            throw new Error('Across intents need the wallet\'s Permit2 signature')
+        }
+        const depositHash = await pullAcrossDeposit({
+            source: chainContext(sourceChain),
+            sponsor,
+            nonce,
+            expires: BigInt(signedIntent.expires),
+            element: parseAcrossElement(signedIntent.elements[0]),
+            originSignature: originSignature as Hex,
+            permitSignatures,
+        })
+        console.log(`Across deposit pulled on ${sourceChain}: ${depositHash}`)
+    }
 
     const destinationOps = toDestinationOpsEncoded(signedIntent.elements)
     const destinationSignature = (signedIntent.destinationSignature ?? '0x') as Hex

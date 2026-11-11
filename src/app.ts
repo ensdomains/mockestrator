@@ -8,12 +8,14 @@ import { intent_status } from './routes/intent_status';
 import { intent_split } from './routes/intent_split';
 import { chains } from './routes/chains';
 import { initContexts } from './chains';
+import { requireApiVersion } from './version';
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 
 app.use(express.json())
+app.use(requireApiVersion)
 
 app.get('/accounts/:userAddress/portfolio', portfolio)
 app.post('/intents/route', intent_route)
